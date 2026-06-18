@@ -758,11 +758,14 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
 
             bool has_sparse_infill = false;
             bool has_solid_infill  = false;
+            bool has_visible_surface_infill = false;
             bool something_nonoverriddable = false;
             for (const ExtrusionEntity *ee : layerm->fills.entities) {
                 // fill represents infill extrusions of a single island.
                 const auto *fill = dynamic_cast<const ExtrusionEntityCollection*>(ee);
                 ExtrusionRole role = fill->entities.empty() ? erNone : fill->entities.front()->role();
+                if (role == erTopSolidInfill || role == erBottomSurface)
+                    has_visible_surface_infill = true;
                 if (internal_solid_infill_uses_sparse_filament(region, role))
                     has_sparse_infill = true;
                 else if (is_solid_infill(role))
@@ -778,8 +781,30 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
 
             if (something_nonoverriddable || !m_print_config_ptr) {
             	if (extruder_override == 0) {
+                    auto append_solid_infill_extruders = [&]() {
+                        const unsigned int configured_solid = unsigned(region.config().solid_infill_filament.value);
+                        const unsigned int grouped_id =
+                            has_visible_surface_infill ? grouped_manual_pattern_mixed_filament_id_for_layer(layer_tools, configured_solid) : 0;
+                        if (grouped_id != 0 && layer_tools.mixed_mgr != nullptr) {
+                            const std::vector<unsigned int> ordered =
+                                layer_tools.mixed_mgr->ordered_perimeter_extruders(grouped_id,
+                                                                                   layer_tools.num_physical,
+                                                                                   layerCount,
+                                                                                   float(layer->print_z),
+                                                                                   float(layer->height));
+                            if (!ordered.empty()) {
+                                if (ordered.size() >= 2)
+                                    layer_tools.preserve_extruder_order = true;
+                                for (unsigned int extruder_id : ordered)
+                                    layer_tools.extruders.emplace_back(extruder_id);
+                                return;
+                            }
+                        }
+                        layer_tools.extruders.emplace_back(layer_tools.solid_infill_filament(region) + 1);
+                    };
+
 	                if (has_solid_infill)
-	                    layer_tools.extruders.emplace_back(layer_tools.solid_infill_filament(region) + 1);
+                        append_solid_infill_extruders();
 	                if (has_sparse_infill)
 	                    layer_tools.extruders.emplace_back(layer_tools.sparse_infill_filament(region) + 1);
             	} else if (has_solid_infill || has_sparse_infill)

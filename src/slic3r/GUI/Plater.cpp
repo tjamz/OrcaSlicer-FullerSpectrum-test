@@ -691,6 +691,7 @@ struct Sidebar::priv
     wxStaticText*       m_staticText_mixed_filaments = nullptr;    // Title text
     Button*             m_btn_add_gradient = nullptr;              // Add gradient button
     Button*             m_btn_add_pattern = nullptr;               // Add pattern button
+    Button*             m_btn_add_shell_blend = nullptr;           // Add fixed outer/inner shell blend button
     Button*             m_btn_add_color = nullptr;                 // Add color-match button
     Button*             m_btn_toggle_mixed_filaments = nullptr;   // Collapse/expand toggle button
     bool                m_mixed_filaments_collapsed = false;      // Collapse state
@@ -1548,6 +1549,66 @@ Sidebar::Sidebar(Plater *parent)
         }
     });
 
+    // Create "Add Shell Blend" button
+    p->m_btn_add_shell_blend = new Button(p->m_panel_mixed_filaments_title, _L("Add Shell Blend"));
+    p->m_btn_add_shell_blend->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
+    p->m_btn_add_shell_blend->SetToolTip(_L("Create fixed outer/inner shell blends for every two-filament pair. Examples: blue + yellow -> green, red + white -> pink, yellow + red -> orange."));
+    p->m_btn_add_shell_blend->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+        if (wxGetApp().preset_bundle == nullptr)
+            return;
+
+        ConfigOptionStrings *co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
+        const std::vector<std::string> colors = co ? co->values : std::vector<std::string>();
+        if (colors.size() < 2)
+            return;
+
+        auto &mgr = wxGetApp().preset_bundle->mixed_filaments;
+        auto shell_blend_exists = [&mgr](unsigned int outer_id, unsigned int inner_id) {
+            const std::string shell_pattern = MixedFilamentManager::normalize_manual_pattern("1,2");
+            for (const MixedFilament &mf : mgr.mixed_filaments()) {
+                if (mf.deleted || !mf.custom)
+                    continue;
+                if (mf.component_a == outer_id &&
+                    mf.component_b == inner_id &&
+                    MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern) == shell_pattern)
+                    return true;
+            }
+            return false;
+        };
+
+        auto add_fixed_shell_blend = [&mgr, &colors, &shell_blend_exists](unsigned int outer_id, unsigned int inner_id) {
+            if (outer_id == inner_id || shell_blend_exists(outer_id, inner_id))
+                return;
+
+            mgr.add_custom_filament(outer_id, inner_id, 50, colors);
+            auto &mfs = mgr.mixed_filaments();
+            if (mfs.empty())
+                return;
+
+            MixedFilament &created = mfs.back();
+            created.manual_pattern = MixedFilamentManager::normalize_manual_pattern("1,2");
+            created.mix_b_percent = MixedFilamentManager::mix_percent_from_manual_pattern(created.manual_pattern);
+            created.gradient_component_ids.clear();
+            created.gradient_component_weights.clear();
+            created.pointillism_all_filaments = false;
+            created.distribution_mode = int(MixedFilament::Simple);
+            created.custom = true;
+            created.origin_auto = false;
+        };
+
+        for (size_t outer_idx = 0; outer_idx < colors.size(); ++outer_idx) {
+            for (size_t inner_idx = outer_idx + 1; inner_idx < colors.size(); ++inner_idx) {
+                add_fixed_shell_blend(unsigned(outer_idx + 1), unsigned(inner_idx + 1));
+                add_fixed_shell_blend(unsigned(inner_idx + 1), unsigned(outer_idx + 1));
+            }
+        }
+
+        if (ConfigOptionString *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
+            opt->value = mgr.serialize_custom_entries();
+        update_mixed_filament_panel(false);
+        m_scrolled_sizer->Layout();
+    });
+
     // Create "Add Color" button
     p->m_btn_add_color = new Button(p->m_panel_mixed_filaments_title, _L("Add Color"));
     p->m_btn_add_color->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
@@ -1600,6 +1661,7 @@ Sidebar::Sidebar(Plater *parent)
     h_sizer_mixed_title->AddStretchSpacer();
     h_sizer_mixed_title->Add(p->m_btn_add_gradient, 0, wxALIGN_CENTER | wxRIGHT, FromDIP(SidebarProps::ElementSpacing()));
     h_sizer_mixed_title->Add(p->m_btn_add_pattern, 0, wxALIGN_CENTER | wxRIGHT, FromDIP(SidebarProps::ElementSpacing()));
+    h_sizer_mixed_title->Add(p->m_btn_add_shell_blend, 0, wxALIGN_CENTER | wxRIGHT, FromDIP(SidebarProps::ElementSpacing()));
     h_sizer_mixed_title->Add(p->m_btn_add_color, 0, wxALIGN_CENTER | wxRIGHT, FromDIP(SidebarProps::TitlebarMargin()));
     h_sizer_mixed_title->SetMinSize(-1, FromDIP(30));
 
@@ -6204,8 +6266,8 @@ void MixedFilamentConfigPanel::build_ui()
                                         wxSize(FromDIP(200), -1), wxTE_PROCESS_ENTER);
         m_pattern_ctrl->SetToolTip(_L("Manual repeating pattern. Use 1/2 or A/B for component A/B, "
                                       "and 3..9 for direct physical filament IDs. "
-                                      "Use commas to define deeper perimeter patterns, for example 12,21. "
-                                      "Example: 1/1/1/1/2/2/2/2, 12,21, or 1/2/3/4."));
+                                      "Use commas to define deeper perimeter patterns, for example 1,2 for outer A and inner B, or 2,1 to flip it. "
+                                      "Example: 1/1/1/1/2/2/2/2, 12,21, 1,2, or 1/2/3/4."));
         pattern_row->Add(m_pattern_ctrl, 1, wxALIGN_CENTER_VERTICAL);
         root->Add(pattern_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, gap);
 
@@ -7435,6 +7497,8 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         p->m_btn_add_gradient->Enable(num_physical >= 2);
     if (p->m_btn_add_pattern)
         p->m_btn_add_pattern->Enable(num_physical >= 2);
+    if (p->m_btn_add_shell_blend)
+        p->m_btn_add_shell_blend->Enable(num_physical >= 2);
     if (p->m_btn_add_color)
         p->m_btn_add_color->Enable(num_physical >= 2);
 
@@ -7462,7 +7526,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
 
     if (mixed.empty()) {
         auto *empty_label = new wxStaticText(rows_scroller, wxID_ANY,
-                                             _L("No mixed filaments yet. Use Add Gradient, Add Pattern, or Add Color to create one."));
+                                             _L("No mixed filaments yet. Use Add Gradient, Add Pattern, Add Shell Blend, or Add Color to create one."));
         empty_label->SetForegroundColour(mixed_summary_fg);
         empty_label->SetFont(::Label::Body_13);
         empty_label->Wrap(FromDIP(360));
@@ -7530,12 +7594,36 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     for (const std::string &hex : physical_colors)
         palette.emplace_back(parse_mixed_color(hex));
 
-    auto mixed_summary_text = [decode_gradient_ids](const MixedFilament &entry) {
+    auto mixed_summary_text = [decode_gradient_ids, num_physical](const MixedFilament &entry) {
         const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(entry.manual_pattern);
         if (!entry.custom)
             return wxString::Format("(Filament %u + Filament %u)", unsigned(entry.component_a), unsigned(entry.component_b));
-        if (!normalized_pattern.empty())
+        if (!normalized_pattern.empty()) {
+            auto resolve_pattern_token = [&entry, num_physical](char token) -> unsigned int {
+                if (token == '1')
+                    return entry.component_a;
+                if (token == '2')
+                    return entry.component_b;
+                if (token >= '3' && token <= '9') {
+                    const unsigned int direct = unsigned(token - '0');
+                    if (direct >= 1 && direct <= num_physical)
+                        return direct;
+                }
+                return 0;
+            };
+
+            const size_t comma = normalized_pattern.find(',');
+            if (comma != std::string::npos &&
+                normalized_pattern.find(',', comma + 1) == std::string::npos &&
+                comma == 1 &&
+                normalized_pattern.size() == 3) {
+                const unsigned int outer_id = resolve_pattern_token(normalized_pattern[0]);
+                const unsigned int inner_id = resolve_pattern_token(normalized_pattern[2]);
+                if (outer_id >= 1 && inner_id >= 1 && outer_id != inner_id)
+                    return wxString::Format(_L("(Outer F%u / Inner F%u)"), outer_id, inner_id);
+            }
             return _L("(Pattern)");
+        }
         if (decode_gradient_ids(entry.gradient_component_ids).size() >= 3)
             return _L("(Color)");
         return wxString::Format("(F%u + F%u)", unsigned(entry.component_a), unsigned(entry.component_b));

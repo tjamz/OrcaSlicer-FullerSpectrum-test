@@ -4147,6 +4147,58 @@ static bool split_extrusion_collection_for_multi_perimeter_pattern(
     return split_entities > 0;
 }
 
+static bool split_extrusion_collection_for_grouped_surface_pattern(
+    const ExtrusionEntityCollection&                         source,
+    const MixedFilamentManager&                              mixed_mgr,
+    unsigned int                                             mixed_filament_id,
+    size_t                                                   num_physical,
+    int                                                      layer_index,
+    std::vector<std::unique_ptr<ExtrusionEntityCollection>>& out_by_extruder,
+    size_t&                                                  out_bucket_count)
+{
+    out_by_extruder.clear();
+    out_by_extruder.resize(num_physical);
+    out_bucket_count = 0;
+
+    if (source.entities.empty() || num_physical == 0)
+        return false;
+
+    const MixedFilament* mixed_row = mixed_mgr.mixed_filament_from_id(mixed_filament_id, num_physical);
+    if (mixed_row == nullptr)
+        return false;
+
+    std::vector<unsigned int> sequence = decode_manual_pattern_sequence_for_gcode(*mixed_row, num_physical);
+    if (unique_extruder_count_for_gcode(sequence, num_physical) < 2)
+        return false;
+
+    size_t split_entities = 0;
+    size_t sequence_idx = sequence.empty() ? 0 : size_t(std::max(0, layer_index)) % sequence.size();
+    ExtrusionEntityCollection flattened = source.flatten(false);
+    for (const ExtrusionEntity* entity : flattened.entities) {
+        if (entity == nullptr)
+            continue;
+
+        unsigned int extruder_id = sequence[sequence_idx % sequence.size()];
+        ++sequence_idx;
+        if (extruder_id == 0 || extruder_id > num_physical)
+            continue;
+
+        std::unique_ptr<ExtrusionEntityCollection>& bucket = out_by_extruder[extruder_id - 1];
+        if (!bucket) {
+            bucket = std::make_unique<ExtrusionEntityCollection>();
+            bucket->no_sort = source.no_sort;
+        }
+        bucket->append(*entity);
+        ++split_entities;
+    }
+
+    for (const std::unique_ptr<ExtrusionEntityCollection>& bucket : out_by_extruder) {
+        if (bucket && !bucket->entities.empty())
+            ++out_bucket_count;
+    }
+    return split_entities > 0;
+}
+
 inline std::vector<GCode::ObjectByExtruder::Island>& object_islands_by_extruder(
     std::map<unsigned int, std::vector<GCode::ObjectByExtruder>>& by_extruder,
     unsigned int                                                  extruder_id,
@@ -5464,6 +5516,59 @@ LayerResult GCode::process_layer(const Print& print,
 
                         // This extrusion is part of certain Region, which tells us which extruder should be used for it:
                         int correct_extruder_id = configured_extruder_id(entity_type, *filtered_extrusions, region);
+                        if (!is_anything_overridden &&
+                            entity_type == ObjectByExtruder::Island::Region::INFILL &&
+                            layer_tools.mixed_mgr != nullptr &&
+                            layer_tools.num_physical > 0 &&
+                            correct_extruder_id >= 0) {
+                            const ExtrusionRole role = filtered_extrusions->entities.empty() ? erNone : filtered_extrusions->entities.front()->role();
+                            const bool visible_surface = role == erTopSolidInfill || role == erBottomSurface;
+                            const unsigned int mixed_filament_id =
+                                visible_surface ? grouped_manual_pattern_mixed_filament_id(entity_type, *filtered_extrusions, region) : 0;
+                            if (mixed_filament_id != 0) {
+                                std::vector<std::unique_ptr<ExtrusionEntityCollection>> split_by_extruder;
+                                size_t bucket_count = 0;
+                                if (split_extrusion_collection_for_grouped_surface_pattern(*filtered_extrusions,
+                                                                                           *layer_tools.mixed_mgr,
+                                                                                           mixed_filament_id,
+                                                                                           layer_tools.num_physical,
+                                                                                           layer_tools.layer_index,
+                                                                                           split_by_extruder,
+                                                                                           bucket_count)) {
+                                    if (bucket_count >= 2) {
+                                        for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
+                                            std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
+                                            if (!split_collection || split_collection->entities.empty())
+                                                continue;
+                                            const ExtrusionEntityCollection* split_ptr = split_collection.get();
+                                            local_z_clipped_collections.emplace_back(std::move(split_collection));
+                                            std::vector<ObjectByExtruder::Island>& islands =
+                                                object_islands_by_extruder(by_extruder, unsigned(extruder_idx), layer_to_print_idx, layers.size(), n_slices + 1);
+                                            for (size_t i = 0; i <= n_slices; ++i) {
+                                                const bool   last       = i == n_slices;
+                                                const size_t island_idx = last ? n_slices : slices_test_order[i];
+                                                if (last || entity_matches_surface(island_idx, *split_ptr)) {
+                                                    if (islands[island_idx].by_region.empty())
+                                                        islands[island_idx].by_region.assign(print.num_print_regions(), ObjectByExtruder::Island::Region());
+                                                    islands[island_idx].by_region[region.print_region_id()].append(entity_type, split_ptr, nullptr);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                    if (bucket_count == 1) {
+                                        for (size_t extruder_idx = 0; extruder_idx < split_by_extruder.size(); ++extruder_idx) {
+                                            const std::unique_ptr<ExtrusionEntityCollection>& split_collection = split_by_extruder[extruder_idx];
+                                            if (split_collection && !split_collection->entities.empty()) {
+                                                correct_extruder_id = int(extruder_idx);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if (!is_anything_overridden &&
                             entity_type == ObjectByExtruder::Island::Region::PERIMETERS &&
                             layer_tools.mixed_mgr != nullptr &&

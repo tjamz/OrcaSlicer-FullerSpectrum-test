@@ -340,6 +340,42 @@ TEST_CASE("Mixed filament perimeter resolver uses grouped manual patterns by ins
     CHECK(ordered_layer1[1] == 1);
 }
 
+TEST_CASE("Fixed grouped shell patterns keep outer and inner components stable across layers", "[MixedFilament]")
+{
+    const std::vector<std::string> colors = {"#FF0000", "#0000FF"};
+
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(2, 1, 50, colors);
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+
+    MixedFilament &blue_outer = mgr.mixed_filaments().front();
+    blue_outer.manual_pattern = MixedFilamentManager::normalize_manual_pattern("1,2");
+    REQUIRE(blue_outer.manual_pattern == "1,2");
+    CHECK(MixedFilamentManager::mix_percent_from_manual_pattern(blue_outer.manual_pattern) == 50);
+
+    const unsigned int mixed_filament_id = 3;
+    for (int layer_idx = 0; layer_idx < 4; ++layer_idx) {
+        CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, layer_idx, 0) == 2);
+        CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, layer_idx, 1) == 1);
+        CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, layer_idx, 3) == 1);
+
+        const std::vector<unsigned int> ordered = mgr.ordered_perimeter_extruders(mixed_filament_id, 2, layer_idx);
+        REQUIRE(ordered.size() == 2);
+        CHECK(ordered[0] == 2);
+        CHECK(ordered[1] == 1);
+        CHECK(mgr.effective_painted_region_filament_id(mixed_filament_id, 2, layer_idx) == mixed_filament_id);
+    }
+
+    blue_outer.manual_pattern = MixedFilamentManager::normalize_manual_pattern("2,1");
+    REQUIRE(blue_outer.manual_pattern == "2,1");
+
+    for (int layer_idx = 0; layer_idx < 4; ++layer_idx) {
+        CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, layer_idx, 0) == 1);
+        CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, layer_idx, 1) == 2);
+        CHECK(mgr.resolve_perimeter(mixed_filament_id, 2, layer_idx, 3) == 2);
+    }
+}
+
 TEST_CASE("Grouped manual perimeter patterns keep grouped resolution on collapsed single-tool layers", "[MixedFilament]")
 {
     const std::vector<std::string> colors = {"#00FFFF", "#FF00FF"};
