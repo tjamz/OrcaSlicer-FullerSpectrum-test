@@ -1,7 +1,7 @@
 
-<h1> <p "font-size:200px;"> Snapmaker Orca FullSpectrum</p> </h1>
+<h1> <p "font-size:200px;"> Snapmaker Orca Full(er) Spectrum</p> </h1>
 
-### A Snapmaker Orca Fork with Mixed-Color Filament Support
+### A Snapmaker Orca Fork with Fuller Mixed-Color Filament Support
 
 [![Build all](https://github.com/Snapmaker/OrcaSlicer/actions/workflows/build_all.yml/badge.svg?branch=main)](https://github.com/Snapmaker/OrcaSlicer/actions/workflows/build_all.yml)
 
@@ -24,28 +24,41 @@ If you find this fun or interesting!
 
 ---
 
-**Snapmaker Orca FullSpectrum** is an open source slicer for FDM printers based on Snapmaker Orca and OrcaSlicer, optimized for Snapmaker's U1 multi-color 3D printer with independent tool heads. This fork adds support for virtual mixed-color filaments, enabling you to create new colors by alternating layers between physical filaments.
+**Snapmaker Orca Full(er) Spectrum** is an open source slicer for FDM printers based on Snapmaker Orca and OrcaSlicer, optimized for Snapmaker's U1 multi-color 3D printer with independent tool heads. This fork builds on the original FullSpectrum concept by adding virtual mixed-color filaments plus a new shell-blend mode that uses the visible outer wall and the next inner wall to make two real filament colors appear more like a third blended color.
  
 
 
 # Download
 
 ### Stable Release
-📥 **[Download the Latest Stable Release](https://github.com/ratdoux/OrcaSlicer-FullSpectrum/releases)**  
-Visit our GitHub Releases page for the latest stable version of Snapmaker Orca FullSpectrum, recommended for most users.
+📥 **[Download the Latest Release](https://github.com/tjamz/OrcaSlicer-FullerSpectrum-test/releases)**  
+Visit the GitHub Releases page for the latest build of Snapmaker Orca Full(er) Spectrum.
 
 # Features
 
 ## Mixed-Color Filaments
-Snapmaker Orca FullSpectrum includes support for **virtual mixed-color filaments** designed for the Snapmaker U1 multi-color printer with independent print heads.
+Snapmaker Orca Full(er) Spectrum includes support for **virtual mixed-color filaments** designed for the Snapmaker U1 multi-color printer with independent print heads.
 
 ### How It Works
-- **Create new colors by mixing**: Combine two physical filaments to create a new color appearance through layer alternation
-- **Example**: One layer of red + one layer of green = apparent yellow color
-- **Customizable ratios**: Adjust the alternation pattern (e.g., 2:1 ratio = two layers of filament A, one layer of filament B)
+- **Create new color appearances**: Combine two physical filaments so nearby printed lines or shells create the visual impression of a blended color
+- **Shell Blend mode**: Use one filament on the outside wall and the second filament on the next inner wall
+- **Top/bottom surface blending**: Split visible top and bottom solid surface paths between both colors so flat faces do not collapse back to one physical filament
+- **Example**: Blue outside + yellow inside can lean green-ish; red + white can lean pink-ish; yellow + red can lean orange-ish
+- **Customizable ratios**: Existing mixed-filament modes can still use alternation patterns, while Shell Blend focuses on fixed outer/inner shell placement
+
+### Shell Blend: Outer vs Inner
+The **Add Shell Blend** button creates entries labeled like `Outer F1 / Inner F2`.
+
+- **Outer F#** is the physical filament printed on the visible outside wall
+- **Inner F#** is the physical filament printed on the next shell behind that outside wall
+- Both directions are created because `Outer F1 / Inner F2` can look different from `Outer F2 / Inner F1`
+- The outside color usually dominates the shade, while the inner color influences the final appearance depending on filament opacity, wall thickness, lighting, and line width
+
+This is not limited to red and blue. The slicer can generate shell-blend entries for any two loaded filament colors.
 
 ### Features
 - Automatic generation of all possible color combinations from your loaded filaments
+- New **Add Shell Blend** button for fixed outer-wall / inner-wall two-color blends
 - Visual preview showing the additive color blend
 - Enable/disable individual mixed filaments
 - Per-layer resolution control with customizable ratios
@@ -55,16 +68,17 @@ Snapmaker Orca FullSpectrum includes support for **virtual mixed-color filaments
 ### Using Mixed Filaments
 1. Load 2 or more physical filaments in your printer
 2. The "Mixed Colors" panel will automatically appear in the sidebar
-3. Each combination shows:
+3. Click **Add Shell Blend** to generate outer/inner shell blend entries for every two-filament pair
+4. Each combination shows:
    - Color preview swatch
-   - Component filaments (e.g., "Filament 1 + Filament 2")
-   - Layer ratio controls (spin controls for fine-tuning)
+   - Component filaments or shell relationship, such as `Outer F1 / Inner F2`
+   - Layer ratio or pattern controls where applicable
    - Enable/disable checkbox
-4. Mixed filaments can be assigned to objects just like physical filaments
-5. During slicing, the mixed filament resolves to alternating layers of its components
+5. Mixed filaments can be assigned to objects just like physical filaments
+6. During slicing, Shell Blend entries keep the outside wall and next inner wall tied to their chosen physical filaments
 
 ### Bias Control
-Snapmaker Orca FullSpectrum also includes an optional **Bias** control for mixed filament pairs. When enabled in **Print Settings -> Others -> Mixed Filaments**, each mixed row gets a compact inline Bias value:
+Snapmaker Orca Full(er) Spectrum also includes an optional **Bias** control for mixed filament pairs. When enabled in **Print Settings -> Others -> Mixed Filaments**, each mixed row gets a compact inline Bias value:
 
 - **Positive Bias** recesses the second filament in the pair
 - **Negative Bias** recesses the first filament in the pair
@@ -74,7 +88,7 @@ Snapmaker Orca FullSpectrum also includes an optional **Bias** control for mixed
 Example: for a pair like `F1 + F2`, a positive bias makes `F2` sit slightly lower, so `F1` visually dominates more. A negative bias does the opposite and recesses `F1`.
 
 ### Dithering Settings
-Snapmaker Orca FullSpectrum includes advanced dithering controls to fine-tune the layer alternation behavior for mixed filaments. These settings are found in **Others → Dithering** in the print settings:
+Snapmaker Orca Full(er) Spectrum includes advanced dithering controls to fine-tune the layer alternation behavior for mixed filaments. These settings are found in **Others → Dithering** in the print settings:
 
 #### Dithering Cadence Height A & B
 - **What it does**: Controls the height (in mm) of each alternating segment for the two component filaments
@@ -95,11 +109,13 @@ These settings give you precise control over how your mixed colors appear in the
 ### Technical Details
 - Virtual filament IDs start after physical filaments (e.g., with 4 physical filaments, first mixed ID is 5)
 - Layer-based alternation is computed during tool ordering
+- Shell Blend entries use fixed grouped shell patterns to keep outer and inner components stable across layers
+- Visible top and bottom solid surfaces can be split into adjacent paths for both component filaments
 - Works with all existing features: supports, infill, and multi-material painting
 
 # How to install
 **Windows**: 
-1.  Download the installer for your preferred version from the [releases page](https://github.com/ratdoux/OrcaSlicer-FullSpectrum/releases).
+1.  Download the installer for your preferred version from the [releases page](https://github.com/tjamz/OrcaSlicer-FullerSpectrum-test/releases).
     - *For convenience there is also a portable build available.*
     - *If you have troubles to run the build, you might need to install following runtimes:*
       - [MicrosoftEdgeWebView2RuntimeInstallerX64](https://github.com/SoftFever/OrcaSlicer/releases/download/v1.0.10-sf2/MicrosoftEdgeWebView2RuntimeInstallerX64.exe)
@@ -174,7 +190,7 @@ resolution: 0.1
 
 
 ## Some background
-**Snapmaker Orca FullSpectrum** is forked from Snapmaker Orca, which is originally forked from Orca Slicer by SoftFever.
+**Snapmaker Orca Full(er) Spectrum** is forked from Snapmaker Orca, which is originally forked from Orca Slicer by SoftFever.
 
 Orca Slicer was originally forked from Bambu Studio, it was previously known as BambuStudio-SoftFever.
 Bambu Studio is forked from [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) by Prusa Research, which is from [Slic3r](https://github.com/Slic3r/Slic3r) by Alessandro Ranellucci and the RepRap community. 
@@ -186,7 +202,7 @@ Special thanks to [u/Aceman11100](https://www.reddit.com/user/Aceman11100/) for 
 
 
 # License
-Snapmaker Orca FullSpectrum is licensed under the GNU Affero General Public License, version 3. Snapmaker Orca FullSpectrum is based on Snapmaker Orca.
+Snapmaker Orca Full(er) Spectrum is licensed under the GNU Affero General Public License, version 3. Snapmaker Orca Full(er) Spectrum is based on Snapmaker Orca.
 
 Snapmaker Orca is licensed under the GNU Affero General Public License, version 3. Snapmaker Orca is based on Orca Slicer by SoftFever.
 
@@ -207,6 +223,6 @@ The Bambu networking plugin is based on non-free libraries from BambuLab. It is 
 Filament color blending is powered by [FilamentMixer](https://github.com/justinh-rahb/filament-mixer), an openly licensed library.
 
 # Feedback & Contribution
-We greatly value feedback and contributions from our users. Your feedback will help us to further develop Snapmaker Orca FullSpectrum for our community.
+We greatly value feedback and contributions from our users. Your feedback will help us to further develop Snapmaker Orca Full(er) Spectrum for our community.
 - To submit a bug or feature request, file an issue in GitHub Issues.
 - To contribute some code, make sure you have read and followed our guidelines for contributing.
