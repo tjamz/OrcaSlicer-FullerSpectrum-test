@@ -1,0 +1,64 @@
+name: Temporary Fuller Spectrum patch launcher
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/codex-apply-fuller-spectrum.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-patch-to-feature-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: codex/fuller-spectrum-shell-blend
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Check patch status
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git apply --check codex/full-spectrum-shell-blend.patch; then
+            echo "PATCH_STATE=apply" >> "$GITHUB_ENV"
+          elif git apply --reverse --check codex/full-spectrum-shell-blend.patch; then
+            echo "PATCH_STATE=already" >> "$GITHUB_ENV"
+          else
+            echo "Patch does not apply cleanly." >&2
+            exit 1
+          fi
+
+      - name: Apply patch
+        if: env.PATCH_STATE == 'apply'
+        shell: bash
+        run: git apply codex/full-spectrum-shell-blend.patch
+
+      - name: Remove branch helper files
+        if: env.PATCH_STATE == 'apply'
+        shell: bash
+        run: |
+          rm -f codex/full-spectrum-shell-blend.patch
+          rmdir codex 2>/dev/null || true
+          rm -f .github/workflows/codex-apply-fuller-spectrum.yml
+
+      - name: Commit patched source to feature branch
+        if: env.PATCH_STATE == 'apply'
+        shell: bash
+        run: |
+          git config user.name "codex-helper"
+          git config user.email "codex-helper@users.noreply.github.com"
+          git add -A
+          git commit -m "Apply Fuller Spectrum shell blend changes"
+          git push origin HEAD:codex/fuller-spectrum-shell-blend
+
+      - name: Already applied
+        if: env.PATCH_STATE == 'already'
+        shell: bash
+        run: echo "Patch already appears to be applied."
