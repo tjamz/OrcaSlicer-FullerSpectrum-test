@@ -4,6 +4,7 @@ on:
   push:
     branches:
      - main
+     - codex/fuller-spectrum-shell-blend
     paths:
      - 'deps/**'
      - 'src/**'
