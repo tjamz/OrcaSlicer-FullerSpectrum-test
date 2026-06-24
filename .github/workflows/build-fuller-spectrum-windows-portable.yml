@@ -1,0 +1,120 @@
+name: Build Fuller Spectrum Windows Portable
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - tools/patches/fuller-spectrum-shell-mixing-minimal.patch
+      - .github/workflows/build-fuller-spectrum-windows-portable.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-windows-portable:
+    name: Build Windows portable ZIP
+    runs-on: windows-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Apply Fuller Spectrum shell mixing patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $patch = 'tools/patches/fuller-spectrum-shell-mixing-minimal.patch'
+          if (-not (Test-Path $patch)) {
+            throw "Patch not found: $patch"
+          }
+
+          git apply --check $patch
+          git apply $patch
+          git diff --check
+
+      - name: Configure Visual Studio environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Generate Visual Studio build files
+        shell: cmd
+        run: build_release_vs.bat
+
+      - name: Find solution
+        id: sln
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sln = Get-ChildItem -Path build -Filter *.sln -Recurse | Select-Object -First 1
+          if (-not $sln) {
+            throw 'No Visual Studio solution found under build after build_release_vs.bat'
+          }
+          "path=$($sln.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Found solution: $($sln.FullName)"
+
+      - name: Build Release x64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          msbuild "${{ steps.sln.outputs.path }}" /m /p:Configuration=Release /p:Platform=x64
+
+      - name: Stage portable folder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $exe = Get-ChildItem -Path build -Filter orca-slicer.exe -Recurse |
+            Where-Object { $_.FullName -match '\\Release\\' } |
+            Select-Object -First 1
+
+          if (-not $exe) {
+            throw 'Could not find Release orca-slicer.exe under build'
+          }
+
+          $stage = Join-Path $PWD 'portable\OrcaSlicer-FullerSpectrum-Windows-Portable'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          $releaseDir = $exe.Directory.FullName
+          Write-Host "Release dir: $releaseDir"
+          Write-Host "Portable stage: $stage"
+
+          Copy-Item -Path (Join-Path $releaseDir '*') -Destination $stage -Recurse -Force
+
+          New-Item -ItemType Directory -Force -Path (Join-Path $stage 'data_dir') | Out-Null
+
+          @'
+@echo off
+cd /d %~dp0
+start "" "%~dp0orca-slicer.exe" --datadir "%~dp0data_dir"
+'@ | Set-Content -Path (Join-Path $stage 'Run-FullerSpectrum-Portable.bat') -Encoding ASCII
+
+          @'
+OrcaSlicer Fuller Spectrum - Portable Windows Build
+
+Run Run-FullerSpectrum-Portable.bat to keep profiles, printers, settings, and logs inside this folder under data_dir.
+
+This build applies the Fuller Spectrum shell-mixing patch during CI before compiling.
+'@ | Set-Content -Path (Join-Path $stage 'README-PORTABLE.txt') -Encoding UTF8
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $PWD 'OrcaSlicer-FullerSpectrum-Windows-Portable.zip'
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path 'portable\OrcaSlicer-FullerSpectrum-Windows-Portable' -DestinationPath $zip -Force
+          Write-Host "Created $zip"
+
+      - name: Upload portable ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrcaSlicer-FullerSpectrum-Windows-Portable
+          path: OrcaSlicer-FullerSpectrum-Windows-Portable.zip
+          if-no-files-found: error
