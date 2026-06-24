@@ -1,0 +1,53 @@
+name: Apply Fuller Spectrum Shell Patch
+
+on:
+  push:
+    branches:
+      - feature/fuller-spectrum-shell-mixing
+    paths:
+      - tools/patches/fuller-spectrum-shell-mixing-minimal.patch
+      - .github/workflows/apply-fuller-spectrum-shell-patch.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-patch:
+    if: ${{ !contains(github.event.head_commit.message, '[fuller-spectrum-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          PATCH="tools/patches/fuller-spectrum-shell-mixing-minimal.patch"
+
+          if git apply --check "$PATCH"; then
+            git apply "$PATCH"
+          elif git apply --reverse --check "$PATCH"; then
+            echo "Patch is already applied."
+            exit 0
+          else
+            echo "Patch does not apply cleanly. Trying 3-way apply..."
+            git apply --3way "$PATCH"
+          fi
+
+          git diff --check
+
+          if git diff --quiet; then
+            echo "No source changes produced."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/libslic3r/GCode/ToolOrdering.cpp src/libslic3r/GCode/ToolOrdering.hpp
+          git commit -m "Implement Fuller Spectrum shell mixing [fuller-spectrum-applied]"
+          git push
