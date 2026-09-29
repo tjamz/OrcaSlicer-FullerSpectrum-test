@@ -552,7 +552,8 @@ TEST_CASE("Fuller Spectrum routes visible skins separately from core", "[MixedFi
             tools.layer_index = layer;
             const unsigned int outside = unsigned(layer % 2);
             const unsigned int inside = 1 - outside;
-            CHECK(tools.wall_filament(region) == outside);
+            // Grouped walls are routed by inset in GCode.cpp, not by the generic wall fallback.
+            CHECK(mgr.resolve_perimeter(3, 2, layer, 0) == outside + 1);
             for (ExtrusionRole role : {erTopSolidInfill, erBottomSurface, erBridgeInfill, erIroning})
                 CHECK(tools.solid_infill_filament(region, role) == outside);
             for (ExtrusionRole role : {erSolidInfill, erInternalBridgeInfill})
