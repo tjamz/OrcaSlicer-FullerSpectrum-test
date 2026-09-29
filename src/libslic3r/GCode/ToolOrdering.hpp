@@ -5,6 +5,7 @@
 
 #include "../libslic3r.h"
 #include "../MixedFilament.hpp"
+#include "../ExtrusionEntity.hpp"
 
 #include <utility>
 
@@ -108,7 +109,7 @@ public:
     // Return a zero based extruder from the region, or extruder_override if overriden.
     unsigned int wall_filament(const PrintRegion &region) const;
     unsigned int sparse_infill_filament(const PrintRegion &region) const;
-    unsigned int solid_infill_filament(const PrintRegion &region) const;
+    unsigned int solid_infill_filament(const PrintRegion &region, ExtrusionRole role) const;
 	// Returns a zero based extruder this eec should be printed with, according to PrintRegion config or extruder_override if overriden.
 	unsigned int extruder(const ExtrusionEntityCollection &extrusions, const PrintRegion &region) const;
 

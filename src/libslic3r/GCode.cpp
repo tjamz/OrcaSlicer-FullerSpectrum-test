@@ -4898,7 +4898,7 @@ LayerResult GCode::process_layer(const Print& print,
             if (role == erSolidInfill && std::abs(region.config().sparse_infill_density.value - 100.) < EPSILON)
                 return int(layer_tools.sparse_infill_filament(region));
             if (is_solid_infill(role))
-                return int(layer_tools.solid_infill_filament(region));
+                return int(layer_tools.solid_infill_filament(region, role));
             return int(layer_tools.sparse_infill_filament(region));
         }
         return int(layer_tools.wall_filament(region));

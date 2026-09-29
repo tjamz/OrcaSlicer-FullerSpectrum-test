@@ -439,8 +439,8 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
     CHECK(layer1.wall_filament(region) == 1);
     CHECK(layer0.sparse_infill_filament(region) == 0);
     CHECK(layer1.sparse_infill_filament(region) == 0);
-    CHECK(layer0.solid_infill_filament(region) == 0);
-    CHECK(layer1.solid_infill_filament(region) == 0);
+    CHECK(layer0.solid_infill_filament(region, erSolidInfill) == 0);
+    CHECK(layer1.solid_infill_filament(region, erSolidInfill) == 0);
 
     region_config.enable_infill_filament_override.value = true;
     region_config.sparse_infill_filament.value          = 2;
@@ -449,8 +449,8 @@ TEST_CASE("Grouped manual wall patterns make infill follow the innermost perimet
 
     CHECK(layer0.sparse_infill_filament(overridden_region) == 1);
     CHECK(layer1.sparse_infill_filament(overridden_region) == 1);
-    CHECK(layer0.solid_infill_filament(overridden_region) == 1);
-    CHECK(layer1.solid_infill_filament(overridden_region) == 1);
+    CHECK(layer0.solid_infill_filament(overridden_region, erSolidInfill) == 1);
+    CHECK(layer1.solid_infill_filament(overridden_region, erSolidInfill) == 1);
 }
 
 TEST_CASE("Mixed filament painted-region resolver collapses ordinary mixed rows to the active physical extruder", "[MixedFilament]")
@@ -527,4 +527,51 @@ TEST_CASE("Extrusion loop and multipath entities preserve inset index", "[MixedF
 
     ExtrusionLoop loop_copy(loop_from_path);
     CHECK(loop_copy.inset_idx == 2);
+}
+
+TEST_CASE("Fuller Spectrum routes visible skins separately from core", "[MixedFilament][FullerSpectrum]")
+{
+    MixedFilamentManager mgr;
+    mgr.add_custom_filament(1, 2, 50, {"#FFFF00", "#0000FF"});
+    REQUIRE(mgr.mixed_filaments().size() == 1);
+    mgr.mixed_filaments().front().manual_pattern = "12,21";
+
+    PrintRegionConfig config = static_cast<const PrintRegionConfig &>(FullPrintConfig::defaults());
+    config.wall_filament.value = 3;
+    config.solid_infill_filament.value = 3;
+    config.enable_infill_filament_override.value = false;
+
+    LayerTools tools(0.2);
+    tools.mixed_mgr = &mgr;
+    tools.num_physical = 2;
+    tools.layer_height = 0.2;
+    for (int walls : {1, 2, 4}) {
+        config.wall_loops.value = walls;
+        PrintRegion region(config);
+        for (int layer = 0; layer < 4; ++layer) {
+            tools.layer_index = layer;
+            const unsigned int outside = unsigned(layer % 2);
+            const unsigned int inside = 1 - outside;
+            CHECK(tools.wall_filament(region) == outside);
+            for (ExtrusionRole role : {erTopSolidInfill, erBottomSurface, erBridgeInfill, erIroning})
+                CHECK(tools.solid_infill_filament(region, role) == outside);
+            for (ExtrusionRole role : {erSolidInfill, erInternalBridgeInfill})
+                CHECK(tools.solid_infill_filament(region, role) == inside);
+            CHECK(tools.sparse_infill_filament(region) == inside);
+        }
+    }
+
+    // Ordinary ungrouped patterns and explicit physical overrides keep their behavior.
+    mgr.mixed_filaments().front().manual_pattern = "12";
+    PrintRegion region(config);
+    for (int layer = 0; layer < 4; ++layer) {
+        tools.layer_index = layer;
+        CHECK(tools.solid_infill_filament(region, erTopSolidInfill) == unsigned(layer % 2));
+        CHECK(tools.solid_infill_filament(region, erSolidInfill) == unsigned(layer % 2));
+    }
+    mgr.mixed_filaments().front().manual_pattern = "12,21";
+    tools.extruder_override = 2;
+    CHECK(tools.solid_infill_filament(region, erTopSolidInfill) == 1);
+    CHECK(tools.solid_infill_filament(region, erSolidInfill) == 1);
+    CHECK(tools.sparse_infill_filament(region) == 1);
 }

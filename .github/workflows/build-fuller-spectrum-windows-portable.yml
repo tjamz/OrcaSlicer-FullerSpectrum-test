@@ -1,123 +1,82 @@
-name: Build Fuller Spectrum Windows Portable
+name: Fuller Spectrum Windows Portable
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches:
-      - main
   push:
-    branches:
-      - main
+    branches: [fuller-spectrum-portable]
     paths:
-      - tools/patches/fuller-spectrum-shell-mixing-minimal.patch
-      - .github/workflows/build-fuller-spectrum-windows-portable.yml
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/fuller-spectrum/**'
+      - '.github/workflows/build-fuller-spectrum-windows-portable.yml'
 
 permissions:
   contents: read
-  actions: read
+
+concurrency:
+  group: fuller-spectrum-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-windows-portable:
-    name: Build Windows portable ZIP
-    runs-on: windows-latest
+  windows:
+    name: Windows Release x64
+    runs-on: windows-2022
     timeout-minutes: 240
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Apply Fuller Spectrum shell mixing patch
+    defaults:
+      run:
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $patch = 'tools/patches/fuller-spectrum-shell-mixing-minimal.patch'
-          if (-not (Test-Path $patch)) {
-            throw "Patch not found: $patch"
-          }
-
-          git apply --check $patch
-          git apply $patch
-          git diff --check
-
-      - name: Configure Visual Studio environment
-        uses: ilammy/msvc-dev-cmd@v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: '~3.28.0'
+      - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-
-      - name: Generate Visual Studio build files
-        shell: cmd
-        run: build_release_vs.bat
-
-      - name: Find solution
-        id: sln
-        shell: pwsh
+      - name: Restore dependency cache
+        id: deps
+        uses: actions/cache@v4
+        with:
+          path: deps/build/OrcaSlicer_dep
+          key: fuller-spectrum-win2022-release-${{ hashFiles('deps/**') }}
+      - name: Build dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
         run: |
           $ErrorActionPreference = 'Stop'
-          $sln = Get-ChildItem -Path build -Filter *.sln -Recurse | Select-Object -First 1
-          if (-not $sln) {
-            throw 'No Visual Studio solution found under build after build_release_vs.bat'
-          }
-          "path=$($sln.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Found solution: $($sln.FullName)"
-
-      - name: Build Release x64
-        shell: pwsh
+          choco install strawberryperl --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Perl installation failed' }
+          $env:PATH = "C:\Strawberry\perl\bin;C:\Strawberry\c\bin;$env:PATH"
+          cmake -S deps -B deps/build -G 'Visual Studio 17 2022' -A x64 "-DDESTDIR=$pwd/deps/build/OrcaSlicer_dep" -DCMAKE_BUILD_TYPE=Release -DDEP_DEBUG=OFF -DORCA_INCLUDE_DEBUG_INFO=OFF
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency configuration failed' }
+          cmake --build deps/build --config Release --target deps --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency build failed' }
+      - name: Configure Release x64
         run: |
-          $ErrorActionPreference = 'Stop'
-          msbuild "${{ steps.sln.outputs.path }}" /m /p:Configuration=Release /p:Platform=x64
-
-      - name: Stage portable folder
-        shell: pwsh
+          cmake -S . -B build -G 'Visual Studio 17 2022' -A x64 -DBBL_RELEASE_TO_PUBLIC=1 -DORCA_TOOLS=ON -DBUILD_TESTS=ON "-DCMAKE_PREFIX_PATH=$pwd/deps/build/OrcaSlicer_dep/usr/local" "-DCMAKE_INSTALL_PREFIX=$pwd/build/FullerSpectrum" -DCMAKE_BUILD_TYPE=Release "-DWIN10SDK_PATH=$($env:WindowsSdkDir)Include\$($env:WindowsSDKVersion)"
+          if ($LASTEXITCODE -ne 0) { throw 'Slicer configuration failed' }
+      - name: Build slicer and regression tests
         run: |
-          $ErrorActionPreference = 'Stop'
-
-          $exe = Get-ChildItem -Path build -Filter orca-slicer.exe -Recurse |
-            Where-Object { $_.FullName -match '\\Release\\' } |
-            Select-Object -First 1
-
-          if (-not $exe) {
-            throw 'Could not find Release orca-slicer.exe under build'
-          }
-
-          $stage = Join-Path $PWD 'portable\OrcaSlicer-FullerSpectrum-Windows-Portable'
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-
-          $releaseDir = $exe.Directory.FullName
-          Write-Host "Release dir: $releaseDir"
-          Write-Host "Portable stage: $stage"
-
-          Copy-Item -Path (Join-Path $releaseDir '*') -Destination $stage -Recurse -Force
-
-          New-Item -ItemType Directory -Force -Path (Join-Path $stage 'data_dir') | Out-Null
-
-          @'
-@echo off
-cd /d %~dp0
-start "" "%~dp0orca-slicer.exe" --datadir "%~dp0data_dir"
-'@ | Set-Content -Path (Join-Path $stage 'Run-FullerSpectrum-Portable.bat') -Encoding ASCII
-
-          @'
-OrcaSlicer Fuller Spectrum - Portable Windows Build
-
-Run Run-FullerSpectrum-Portable.bat to keep profiles, printers, settings, and logs inside this folder under data_dir.
-
-This build applies the Fuller Spectrum shell-mixing patch during CI before compiling.
-'@ | Set-Content -Path (Join-Path $stage 'README-PORTABLE.txt') -Encoding UTF8
-
-      - name: Create portable ZIP
-        shell: pwsh
+          cmake --build build --config Release --target Snapmaker_Orca_app_gui libslic3r_tests --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'Slicer or test compilation failed' }
+      - name: Test mixed filament routing
         run: |
-          $ErrorActionPreference = 'Stop'
-          $zip = Join-Path $PWD 'OrcaSlicer-FullerSpectrum-Windows-Portable.zip'
-          if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path 'portable\OrcaSlicer-FullerSpectrum-Windows-Portable' -DestinationPath $zip -Force
-          Write-Host "Created $zip"
-
-      - name: Upload portable ZIP artifact
+          $test = Get-ChildItem build -Filter libslic3r_tests.exe -Recurse | Select-Object -First 1
+          if (-not $test) { throw 'Regression test executable missing' }
+          $env:PATH = "$pwd/build/src/Release;$env:PATH"
+          & $test.FullName '[MixedFilament]'
+          if ($LASTEXITCODE -ne 0) { throw 'Mixed filament regression tests failed' }
+      - name: Install application and resources
+        run: |
+          cmd /c scripts\run_gettext.bat
+          if ($LASTEXITCODE -ne 0) { throw 'Translation generation failed' }
+          cmake --install build --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'Application installation failed' }
+      - name: Package and verify portable ZIP
+        run: ./tools/fuller-spectrum/package-portable.ps1
+      - name: Upload portable ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: OrcaSlicer-FullerSpectrum-Windows-Portable
-          path: OrcaSlicer-FullerSpectrum-Windows-Portable.zip
+          name: FullerSpectrum-Windows-x64-Portable
+          path: FullerSpectrum-Windows-x64-Portable.zip
           if-no-files-found: error
+          retention-days: 30

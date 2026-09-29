@@ -122,18 +122,23 @@ unsigned int grouped_manual_pattern_mixed_filament_id_for_layer(const LayerTools
 
 unsigned int grouped_manual_pattern_infill_filament_1based(const LayerTools&  layer_tools,
                                                            const PrintRegion& region,
-                                                           unsigned int       configured_filament_id_1based)
+                                                           unsigned int       configured_filament_id_1based,
+                                                           ExtrusionRole      role)
 {
     const unsigned int grouped_id =
         grouped_manual_pattern_mixed_filament_id_for_layer(layer_tools, configured_filament_id_1based);
     if (grouped_id == 0)
         return 0;
 
-    const int innermost_perimeter_index = std::max(0, region.config().wall_loops.value - 1);
+    // Visible skins follow the outer wall's group. Internal bridges and core
+    // retain the innermost group; even a one-wall object uses group 1 inside.
+    const bool visible_skin = role == erTopSolidInfill || role == erBottomSurface ||
+                              role == erBridgeInfill || role == erIroning;
+    const int perimeter_index = visible_skin ? 0 : std::max(1, region.config().wall_loops.value - 1);
     return layer_tools.mixed_mgr->resolve_perimeter(grouped_id,
                                                     layer_tools.num_physical,
                                                     layer_tools.layer_index,
-                                                    innermost_perimeter_index,
+                                                    perimeter_index,
                                                     float(layer_tools.print_z),
                                                     float(layer_tools.layer_height));
 }
@@ -297,15 +302,15 @@ unsigned int LayerTools::sparse_infill_filament(const PrintRegion &region) const
 {
 	assert(region.config().wall_filament.value > 0);
 	unsigned int id = (this->extruder_override == 0) ? sparse_infill_filament_id_1based(*this, region) : this->extruder_override;
-    const unsigned int grouped = grouped_manual_pattern_infill_filament_1based(*this, region, id);
+    const unsigned int grouped = grouped_manual_pattern_infill_filament_1based(*this, region, id, erInternalInfill);
 	return ((grouped != 0) ? grouped : resolve_mixed_1based(id)) - 1;
 }
 
-unsigned int LayerTools::solid_infill_filament(const PrintRegion &region) const
+unsigned int LayerTools::solid_infill_filament(const PrintRegion &region, ExtrusionRole role) const
 {
 	assert(region.config().solid_infill_filament.value > 0);
 	unsigned int id = (this->extruder_override == 0) ? region.config().solid_infill_filament.value : this->extruder_override;
-    const unsigned int grouped = grouped_manual_pattern_infill_filament_1based(*this, region, id);
+    const unsigned int grouped = grouped_manual_pattern_infill_filament_1based(*this, region, id, role);
 	return ((grouped != 0) ? grouped : resolve_mixed_1based(id)) - 1;
 }
 
@@ -319,7 +324,7 @@ unsigned int LayerTools::extruder(const ExtrusionEntityCollection &extrusions, c
         const ExtrusionRole role = extrusions.entities.empty() ? erNone : extrusions.entities.front()->role();
         if (internal_solid_infill_uses_sparse_filament(region, role))
             return sparse_infill_filament(region);
-        return is_solid_infill(role) ? solid_infill_filament(region) : sparse_infill_filament(region);
+        return is_solid_infill(role) ? solid_infill_filament(region, role) : sparse_infill_filament(region);
     }
     return wall_filament(region);
 }
@@ -758,6 +763,7 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
 
             bool has_sparse_infill = false;
             bool has_solid_infill  = false;
+            std::vector<ExtrusionRole> solid_infill_roles;
             bool something_nonoverriddable = false;
             for (const ExtrusionEntity *ee : layerm->fills.entities) {
                 // fill represents infill extrusions of a single island.
@@ -765,9 +771,11 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
                 ExtrusionRole role = fill->entities.empty() ? erNone : fill->entities.front()->role();
                 if (internal_solid_infill_uses_sparse_filament(region, role))
                     has_sparse_infill = true;
-                else if (is_solid_infill(role))
+                else if (is_solid_infill(role)) {
                     has_solid_infill = true;
-                else if (role != erNone)
+                    if (std::find(solid_infill_roles.begin(), solid_infill_roles.end(), role) == solid_infill_roles.end())
+                        solid_infill_roles.emplace_back(role);
+                } else if (role != erNone)
                     has_sparse_infill = true;
 
                 if (m_print_config_ptr) {
@@ -779,7 +787,8 @@ void ToolOrdering::collect_extruders(const PrintObject &object, const std::vecto
             if (something_nonoverriddable || !m_print_config_ptr) {
             	if (extruder_override == 0) {
 	                if (has_solid_infill)
-	                    layer_tools.extruders.emplace_back(layer_tools.solid_infill_filament(region) + 1);
+                        for (ExtrusionRole role : solid_infill_roles)
+                            layer_tools.extruders.emplace_back(layer_tools.solid_infill_filament(region, role) + 1);
 	                if (has_sparse_infill)
 	                    layer_tools.extruders.emplace_back(layer_tools.sparse_infill_filament(region) + 1);
             	} else if (has_solid_infill || has_sparse_infill)
