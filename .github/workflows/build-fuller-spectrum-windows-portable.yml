@@ -75,7 +75,10 @@ jobs:
         run: |
           cmd /c scripts\run_gettext.bat
           if ($LASTEXITCODE -ne 0) { throw 'Translation generation failed' }
-          cmake --install build --config Release
+          # Install only the app and its resources, without dependency SDK libraries.
+          cmake -DCMAKE_INSTALL_LOCAL_ONLY=ON -DCMAKE_INSTALL_CONFIG_NAME=Release -P build/cmake_install.cmake
+          if ($LASTEXITCODE -ne 0) { throw 'Resource installation failed' }
+          cmake -DCMAKE_INSTALL_LOCAL_ONLY=ON -DCMAKE_INSTALL_CONFIG_NAME=Release -P build/src/cmake_install.cmake
           if ($LASTEXITCODE -ne 0) { throw 'Application installation failed' }
       - name: Package and verify portable ZIP
         run: ./tools/fuller-spectrum/package-portable.ps1
@@ -86,3 +89,12 @@ jobs:
           path: FullerSpectrum-Windows-x64-Portable.zip
           if-no-files-found: error
           retention-days: 30
+
+      - name: Preserve installed files if packaging fails
+        if: failure() && hashFiles('build/FullerSpectrum/snapmaker-orca.exe') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: FullerSpectrum-packaging-recovery
+          path: build/FullerSpectrum/
+          if-no-files-found: error
+          retention-days: 7
